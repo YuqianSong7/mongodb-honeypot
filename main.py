@@ -20,7 +20,7 @@
 
 
 from enum import IntEnum
-from socketserver import BaseRequestHandler, TCPServer
+from socketserver import BaseRequestHandler, ThreadingTCPServer
 from xstruct import struct, sizeof, Little, Int32, CString, BSON
 
 
@@ -79,7 +79,7 @@ class MongoHandler(BaseRequestHandler):
 
 if __name__ == "__main__":
     try:
-        with TCPServer(("localhost", 27017), MongoHandler) as server:
+        with ThreadingTCPServer(("localhost", 27017), MongoHandler) as server:
             server.serve_forever()
     except KeyboardInterrupt:
         print("Interrupted")
