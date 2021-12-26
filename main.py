@@ -23,6 +23,8 @@ from enum import IntEnum
 from socketserver import BaseRequestHandler, ThreadingTCPServer
 from xstruct import struct, sizeof, Little, Int32, CString, BSON
 
+from args import parser
+
 
 class OpCodes(IntEnum):
     OP_REPLY        = 1
@@ -78,8 +80,9 @@ class MongoHandler(BaseRequestHandler):
 
 
 if __name__ == "__main__":
+    args = parser.parse_args()
     try:
-        with ThreadingTCPServer(("localhost", 27017), MongoHandler) as server:
+        with ThreadingTCPServer(args.host, MongoHandler) as server:
             server.serve_forever()
     except KeyboardInterrupt:
         print("Interrupted")
