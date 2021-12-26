@@ -68,11 +68,11 @@ class MongoHandler(BaseRequestHandler):
     def recv_msg(self):
         header_size = sizeof(MsgHeader)
         buf = self.request.recv(header_size)
-        header = MsgHeader(buf)
+        header = MsgHeader.unpack(buf)
 
         buf += self.request.recv(header.message_length-header_size)
         if header.op_code == OP_QUERY:
-            return QueryMsg(buf)
+            return QueryMsg.unpack(buf)
 
         raise NotImplementedError
 
