@@ -64,12 +64,14 @@ class QueryMsg:
 
 class MongoHandler(BaseRequestHandler):
     def handle(self):
-        msg = self.recv_msg()
-        print(msg)
+        for msg in iter(self.recv_msg, None):
+            print(msg)
 
     def recv_msg(self):
         header_size = sizeof(MsgHeader)
         buf = self.request.recv(header_size)
+        if not buf:
+            return None
         header = MsgHeader.unpack(buf)
 
         buf += self.request.recv(header.message_length-header_size)
