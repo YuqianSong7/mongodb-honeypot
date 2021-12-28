@@ -20,6 +20,7 @@
 
 
 from enum import IntEnum
+from socket import socket, AF_INET, SOCK_STREAM
 from socketserver import BaseRequestHandler, ThreadingTCPServer
 from xstruct import struct, sizeof, Little, Int32, CString, BSON
 
@@ -39,6 +40,13 @@ class OpCodes(IntEnum):
 
 
 globals().update(OpCodes.__members__)
+
+
+def op_code_name(op_code):
+    return next(
+            k for k, v
+            in OpCodes.__members__.items()
+            if v == op_code)
 
 
 @struct(endianess=Little)
@@ -62,29 +70,66 @@ class QueryMsg:
     return_fields_selector: BSON = {}
 
 
+def recv_msg(sock):
+    header_size = sizeof(MsgHeader)
+    buf = sock.recv(header_size)
+    if not buf:
+        return None
+    header = MsgHeader.unpack(buf)
+
+    return header, buf+sock.recv(header.message_length-header_size)
+
+
+def recv_all(sock):
+    while (ret := recv_msg(sock)) is not None:
+        yield ret
+
+
+msg_classes = {
+    OP_QUERY: QueryMsg
+    #OP_MSG: MsgMsg
+}
+
+
+def decode_msg(buf):
+    header = MsgHeader.unpack(buf)
+    try:
+        msg_cls = msg_classes[header.op_code]
+    except KeyError:
+        return None
+    return msg_cls.unpack(buf)
+
+
 class MongoHandler(BaseRequestHandler):
+    def __init__(self, mongo_host):
+        self.mongo_host = mongo_host
+
+    def __call__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
     def handle(self):
-        for msg in iter(self.recv_msg, None):
-            print(msg)
+        with socket(AF_INET, SOCK_STREAM) as mongo_sock:
+            try:
+                mongo_sock.connect(self.mongo_host)
+            except ConnectionRefusedError:
+                print("Upstream connection refused: is Mongo up?")
+                return
 
-    def recv_msg(self):
-        header_size = sizeof(MsgHeader)
-        buf = self.request.recv(header_size)
-        if not buf:
-            return None
-        header = MsgHeader.unpack(buf)
-
-        buf += self.request.recv(header.message_length-header_size)
-        if header.op_code == OP_QUERY:
-            return QueryMsg.unpack(buf)
-
-        raise NotImplementedError
+            for header, buf in recv_all(self.request):
+                msg = decode_msg(buf)
+                peer_addr, peer_port = self.request.getpeername()
+                print(f"Forwarding {op_code_name(header.op_code)} from {peer_addr}:{peer_port}")
+                if msg is not None:
+                    print(msg)
+                mongo_sock.send(buf)
+                _, reply = recv_msg(mongo_sock)
+                self.request.send(reply)
 
 
 if __name__ == "__main__":
     args = parser.parse_args()
     try:
-        with ThreadingTCPServer(args.host, MongoHandler) as server:
+        with ThreadingTCPServer(args.host, MongoHandler(args.mongo_host)) as server:
             server.serve_forever()
     except KeyboardInterrupt:
         print("Interrupted")
