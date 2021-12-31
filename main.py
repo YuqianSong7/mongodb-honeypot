@@ -221,6 +221,8 @@ class MongoHandler(BaseRequestHandler):
 
 
 class ProxyServer(ThreadingMixIn, TCPServer):
+    allow_reuse_address = True
+
     def server_close(self):
         shutdown_event.set()
         super().server_close()
