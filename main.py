@@ -22,7 +22,7 @@
 from enum import IntEnum
 from socket import socket, AF_INET, SOCK_STREAM
 from socketserver import BaseRequestHandler, ThreadingTCPServer
-from xstruct import struct, sizeof, Little, Int32, CString, BSON
+from xstruct import struct, sizeof, byteorder, Little, UInt8, Int32, UInt32, Int64, Bytes, CString, BSON, Array, CustomMember
 
 from args import parser
 
@@ -39,7 +39,14 @@ class OpCodes(IntEnum):
     OP_MSG          = 2013
 
 
+class FlagBits(IntEnum):
+    CHECKSUM_PRESENT = 1 << 0
+    MORE_TO_COME     = 1 << 1
+    EXHAUST_ALLOWED  = 1 << 16
+
+
 globals().update(OpCodes.__members__)
+globals().update(FlagBits.__members__)
 
 
 def op_code_name(op_code):
@@ -70,6 +77,70 @@ class QueryMsg:
     return_fields_selector: BSON = {}
 
 
+@struct(endianess=Little)
+class ReplyMsg:
+    header: MsgHeader
+
+    response_flags:  Int32
+    cursor_id:       Int64
+    starting_from:   Int32
+    number_returned: Int32
+    documents:       Array(BSON, "number_returned")
+
+
+@struct(endianess=Little)
+class MsgMsgHeader:
+    header: MsgHeader
+    flag_bits: UInt32
+
+
+@struct(endianess=Little)
+class BodySection:
+    kind: UInt8
+    body: BSON
+
+
+class MsgSection(CustomMember):
+    def unpack(self, obj, buf, endianess=Little):
+        kind = buf[0]
+        length = int.from_bytes(buf[1:5], byteorder[endianess], signed=False)
+        if kind == 0:
+            section = BodySection.unpack(buf)
+        else:
+            raise NotImplementedError(f"Unimplemented section kind {kind!r}")
+        return section, buf[sizeof(section):]
+
+
+@struct(endianess=Little)
+class MsgMsg:
+    header: MsgHeader
+    flag_bits: UInt32
+    sections: Array(MsgSection)
+
+
+def unpack_msgmsg(buf):
+    header = MsgMsgHeader.unpack(buf)
+    if header.flag_bits & CHECKSUM_PRESENT:
+        buf = buf[:-4]
+    return MsgMsg.unpack(buf)
+
+
+msg_unpackers = {
+    OP_QUERY: QueryMsg.unpack,
+    OP_REPLY: ReplyMsg.unpack,
+    OP_MSG: unpack_msgmsg
+}
+
+
+def decode_msg(buf):
+    header = MsgHeader.unpack(buf)
+    try:
+        unpacker = msg_unpackers[header.op_code]
+    except KeyError as e:
+        raise NotImplementedError(f"Unimplemented op_code {op_code_name(header.op_code)}") from e
+    return unpacker(buf)
+
+
 def recv_msg(sock):
     header_size = sizeof(MsgHeader)
     buf = sock.recv(header_size)
@@ -83,21 +154,6 @@ def recv_msg(sock):
 def recv_all(sock):
     while (ret := recv_msg(sock)) is not None:
         yield ret
-
-
-msg_classes = {
-    OP_QUERY: QueryMsg
-    #OP_MSG: MsgMsg
-}
-
-
-def decode_msg(buf):
-    header = MsgHeader.unpack(buf)
-    try:
-        msg_cls = msg_classes[header.op_code]
-    except KeyError:
-        return None
-    return msg_cls.unpack(buf)
 
 
 class MongoHandler(BaseRequestHandler):
