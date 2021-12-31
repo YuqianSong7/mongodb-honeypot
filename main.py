@@ -19,16 +19,21 @@
  ###############################################################################
 
 
+import sys
+from time import time
 from enum import IntEnum
 from socket import socket, AF_INET, SOCK_STREAM
 from selectors import DefaultSelector, EVENT_READ
 from socketserver import BaseRequestHandler, TCPServer, ThreadingMixIn
-from threading import Lock, Event
+from threading import Thread, Lock, Event
 from functools import wraps
 from xstruct import struct, sizeof, byteorder, Little, UInt8, Int32, UInt32, Int64, Bytes, CString, BSON, Array, CustomMember
 
 import colorama
 from colorama import Fore
+
+from pymongo import MongoClient
+from pymongo.errors import ServerSelectionTimeoutError
 
 from args import parser
 
@@ -39,6 +44,18 @@ _print = print
 def print(*args, **kwargs):
     with output_lock:
         _print(*args, **kwargs)
+
+
+class ExecTimer:
+    def __init__(self):
+        self.time = 0
+
+    def __enter__(self):
+        self.time = time()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.time = time() - self.time
 
 
 class OpCodes(IntEnum):
@@ -228,11 +245,41 @@ class ProxyServer(ThreadingMixIn, TCPServer):
         super().server_close()
 
 
+def is_mongo_up(mongo_host):
+    try:
+        MongoClient(*mongo_host, serverSelectionTimeoutMS=3000).server_info()
+    except ServerSelectionTimeoutError:
+        return False
+    else:
+        return True
+
+
+def check_mongo(mongo_host, check_interval):
+    was_up = True
+    elapsed = ExecTimer()
+    while not shutdown_event.wait(max(check_interval-elapsed.time, 0)):
+        with elapsed:
+            is_up = is_mongo_up(mongo_host)
+            if is_up != was_up:
+                if is_up:
+                    print("Mongo is back up")
+                else:
+                    print("Mongo went down")
+                was_up = is_up
+
+
 if __name__ == "__main__":
     colorama.init(autoreset=True)
     args = parser.parse_args()
+    if not is_mongo_up(args.mongo_host):
+        mongo_addr, mongo_port = args.mongo_host
+        print("Could not connect to Mongo at {mongo_addr}:{mongo_port}")
+        sys.exit(1)
     try:
+        Thread(target=check_mongo, args=(args.mongo_host, args.check_interval), daemon=False).start()
         with ProxyServer(args.host, MongoHandler(args.mongo_host)) as server:
             server.serve_forever()
     except KeyboardInterrupt:
         print("Interrupted")
+    finally:
+        shutdown_event.set()
