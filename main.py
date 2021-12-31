@@ -21,6 +21,7 @@
 
 from enum import IntEnum
 from socket import socket, AF_INET, SOCK_STREAM
+from selectors import DefaultSelector, EVENT_READ
 from socketserver import BaseRequestHandler, ThreadingTCPServer
 from xstruct import struct, sizeof, byteorder, Little, UInt8, Int32, UInt32, Int64, Bytes, CString, BSON, Array, CustomMember
 
@@ -132,7 +133,7 @@ msg_unpackers = {
 }
 
 
-def decode_msg(buf):
+def unpack_msg(buf):
     header = MsgHeader.unpack(buf)
     try:
         unpacker = msg_unpackers[header.op_code]
@@ -145,15 +146,24 @@ def recv_msg(sock):
     header_size = sizeof(MsgHeader)
     buf = sock.recv(header_size)
     if not buf:
-        return None
+        return buf
     header = MsgHeader.unpack(buf)
+    buf += sock.recv(header.message_length-header_size)
+    return buf
 
-    return header, buf+sock.recv(header.message_length-header_size)
 
-
-def recv_all(sock):
-    while (ret := recv_msg(sock)) is not None:
-        yield ret
+def proxy(peer_sock, mongo_sock):
+    with DefaultSelector() as selector:
+        selector.register(peer_sock, EVENT_READ, mongo_sock)
+        selector.register(mongo_sock, EVENT_READ, peer_sock)
+        for events in iter(selector.select, None):
+            for (sock, _, _, peer), _ in events:
+                buf = recv_msg(sock)
+                if not buf:
+                    return
+                msg = unpack_msg(buf)
+                print(msg)
+                peer.send(buf)
 
 
 class MongoHandler(BaseRequestHandler):
@@ -171,15 +181,11 @@ class MongoHandler(BaseRequestHandler):
                 print("Upstream connection refused: is Mongo up?")
                 return
 
-            for header, buf in recv_all(self.request):
-                msg = decode_msg(buf)
-                peer_addr, peer_port = self.request.getpeername()
-                print(f"Forwarding {op_code_name(header.op_code)} from {peer_addr}:{peer_port}")
-                if msg is not None:
-                    print(msg)
-                mongo_sock.send(buf)
-                _, reply = recv_msg(mongo_sock)
-                self.request.send(reply)
+            peer_sock = self.request
+            peer_addr, peer_port = peer_sock.getpeername()
+            print(f"Incoming connection from {peer_addr}:{peer_port}")
+
+            proxy(peer_sock, mongo_sock)
 
 
 if __name__ == "__main__":
