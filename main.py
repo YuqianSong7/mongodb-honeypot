@@ -166,12 +166,22 @@ def recv_msg(sock):
 
 
 def proxy(peer_sock, mongo_sock):
+    peer_addr, peer_port = peer_sock.getpeername()
+    print(f"Incoming connection from {peer_addr}:{peer_port}")
+
     with DefaultSelector() as selector:
         selector.register(peer_sock, EVENT_READ, (mongo_sock, Fore.GREEN))
         selector.register(mongo_sock, EVENT_READ, (peer_sock, Fore.RED))
         for events in iter(selector.select, None):
             for (sock, _, _, (peer, color)), _ in events:
-                buf = recv_msg(sock)
+                try:
+                    buf = recv_msg(sock)
+                except ConnectionResetError:
+                    if sock is peer_sock:
+                        print(f"Connection reset by peer {peer_addr}:{peer_port}")
+                    else:
+                        print(f"Connection reset by upstream Mongo for peer {peer_addr}:{peer_port}")
+                    return
                 if not buf:
                     return
                 msg = unpack_msg(buf)
@@ -194,11 +204,7 @@ class MongoHandler(BaseRequestHandler):
                 print("Upstream connection refused: is Mongo up?")
                 return
 
-            peer_sock = self.request
-            peer_addr, peer_port = peer_sock.getpeername()
-            print(f"Incoming connection from {peer_addr}:{peer_port}")
-
-            proxy(peer_sock, mongo_sock)
+            proxy(self.request, mongo_sock)
 
 
 if __name__ == "__main__":
