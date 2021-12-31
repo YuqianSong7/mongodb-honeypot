@@ -22,8 +22,8 @@
 from enum import IntEnum
 from socket import socket, AF_INET, SOCK_STREAM
 from selectors import DefaultSelector, EVENT_READ
-from socketserver import BaseRequestHandler, ThreadingTCPServer
-from threading import Lock
+from socketserver import BaseRequestHandler, TCPServer, ThreadingMixIn
+from threading import Lock, Event
 from functools import wraps
 from xstruct import struct, sizeof, byteorder, Little, UInt8, Int32, UInt32, Int64, Bytes, CString, BSON, Array, CustomMember
 
@@ -165,6 +165,9 @@ def recv_msg(sock):
     return buf
 
 
+shutdown_event = Event()
+
+
 def proxy(peer_sock, mongo_sock):
     peer_addr, peer_port = peer_sock.getpeername()
     print(f"Incoming connection from {peer_addr}:{peer_port}")
@@ -172,8 +175,11 @@ def proxy(peer_sock, mongo_sock):
     with DefaultSelector() as selector:
         selector.register(peer_sock, EVENT_READ, (mongo_sock, Fore.GREEN))
         selector.register(mongo_sock, EVENT_READ, (peer_sock, Fore.RED))
-        for events in iter(selector.select, None):
-            for (sock, _, _, (peer, color)), _ in events:
+        while True:
+            selector_events = selector.select(timeout=1)
+            if shutdown_event.is_set():
+                return
+            for (sock, _, _, (peer, color)), _ in selector_events:
                 exit_condition = None
                 try:
                     buf = recv_msg(sock)
@@ -214,11 +220,17 @@ class MongoHandler(BaseRequestHandler):
             proxy(self.request, mongo_sock)
 
 
+class ProxyServer(ThreadingMixIn, TCPServer):
+    def server_close(self):
+        shutdown_event.set()
+        super().server_close()
+
+
 if __name__ == "__main__":
     colorama.init(autoreset=True)
     args = parser.parse_args()
     try:
-        with ThreadingTCPServer(args.host, MongoHandler(args.mongo_host)) as server:
+        with ProxyServer(args.host, MongoHandler(args.mongo_host)) as server:
             server.serve_forever()
     except KeyboardInterrupt:
         print("Interrupted")
