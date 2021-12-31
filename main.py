@@ -174,15 +174,22 @@ def proxy(peer_sock, mongo_sock):
         selector.register(mongo_sock, EVENT_READ, (peer_sock, Fore.RED))
         for events in iter(selector.select, None):
             for (sock, _, _, (peer, color)), _ in events:
+                exit_condition = None
                 try:
                     buf = recv_msg(sock)
                 except ConnectionResetError:
                     if sock is peer_sock:
-                        print(f"Connection reset by peer {peer_addr}:{peer_port}")
+                        exit_condition = "reset by peer"
                     else:
-                        print(f"Connection reset by upstream Mongo for peer {peer_addr}:{peer_port}")
-                    return
-                if not buf:
+                        exit_condition = "reset by upstream Mongo for peer"
+                else:
+                    if not buf:
+                        if sock is peer_sock:
+                            exit_condition = "closed by peer"
+                        else:
+                            exit_condition = "closed by upstream Mongo for peer"
+                if exit_condition:
+                    print(f"Connection {exit_condition} {peer_addr}:{peer_port}")
                     return
                 msg = unpack_msg(buf)
                 print(f"{color}{msg}")
