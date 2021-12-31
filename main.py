@@ -23,9 +23,19 @@ from enum import IntEnum
 from socket import socket, AF_INET, SOCK_STREAM
 from selectors import DefaultSelector, EVENT_READ
 from socketserver import BaseRequestHandler, ThreadingTCPServer
+from threading import Lock
+from functools import wraps
 from xstruct import struct, sizeof, byteorder, Little, UInt8, Int32, UInt32, Int64, Bytes, CString, BSON, Array, CustomMember
 
 from args import parser
+
+
+output_lock = Lock()
+_print = print
+@wraps(_print)
+def print(*args, **kwargs):
+    with output_lock:
+        _print(*args, **kwargs)
 
 
 class OpCodes(IntEnum):
