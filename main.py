@@ -27,6 +27,9 @@ from threading import Lock
 from functools import wraps
 from xstruct import struct, sizeof, byteorder, Little, UInt8, Int32, UInt32, Int64, Bytes, CString, BSON, Array, CustomMember
 
+import colorama
+from colorama import Fore
+
 from args import parser
 
 
@@ -164,15 +167,15 @@ def recv_msg(sock):
 
 def proxy(peer_sock, mongo_sock):
     with DefaultSelector() as selector:
-        selector.register(peer_sock, EVENT_READ, mongo_sock)
-        selector.register(mongo_sock, EVENT_READ, peer_sock)
+        selector.register(peer_sock, EVENT_READ, (mongo_sock, Fore.GREEN))
+        selector.register(mongo_sock, EVENT_READ, (peer_sock, Fore.RED))
         for events in iter(selector.select, None):
-            for (sock, _, _, peer), _ in events:
+            for (sock, _, _, (peer, color)), _ in events:
                 buf = recv_msg(sock)
                 if not buf:
                     return
                 msg = unpack_msg(buf)
-                print(msg)
+                print(f"{color}{msg}")
                 peer.send(buf)
 
 
@@ -199,6 +202,7 @@ class MongoHandler(BaseRequestHandler):
 
 
 if __name__ == "__main__":
+    colorama.init(autoreset=True)
     args = parser.parse_args()
     try:
         with ThreadingTCPServer(args.host, MongoHandler(args.mongo_host)) as server:
