@@ -290,12 +290,19 @@ def unpack_msg(buf):
 
 def recv_msg(sock):
     header_size = sizeof(MsgHeader)
-    buf = sock.recv(header_size)
-    if not buf:
-        return buf
-    header = MsgHeader.unpack(buf)
-    buf += sock.recv(header.message_length-header_size)
-    return buf
+    header_buf = sock.recv(header_size)
+    if len(header_buf) < header_size:
+        raise EOFError
+    header = MsgHeader.unpack(header_buf)
+    buf = bytearray(header.message_length)
+    buf[:header_size] = header_buf
+    i = header_size
+    while i < header.message_length:
+        read = sock.recv_into(memoryview(buf)[i:])
+        if read == 0:
+            raise EOFError
+        i += read
+    return bytes(buf)
 
 
 shutdown_event = Event()
@@ -321,12 +328,11 @@ def proxy(peer_sock, mongo_sock):
                         exit_condition = "reset by peer"
                     else:
                         exit_condition = "reset by upstream Mongo for peer"
-                else:
-                    if not buf:
-                        if sock is peer_sock:
-                            exit_condition = "closed by peer"
-                        else:
-                            exit_condition = "closed by upstream Mongo for peer"
+                except EOFError:
+                    if sock is peer_sock:
+                        exit_condition = "closed by peer"
+                    else:
+                        exit_condition = "closed by upstream Mongo for peer"
                 if exit_condition:
                     print(f"Connection {exit_condition} {peer_addr}:{peer_port}")
                     return
