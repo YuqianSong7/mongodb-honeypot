@@ -96,6 +96,37 @@ class MsgHeader:
 
 
 @struct(endianess=Little)
+class ReplyMsg:
+    header: MsgHeader
+
+    response_flags:  Int32
+    cursor_id:       Int64
+    starting_from:   Int32
+    number_returned: Int32
+    documents:       Array(BSON, "number_returned")
+
+
+@struct(endianess=Little)
+class UpdateMsg:
+    header: MsgHeader
+
+    zero:                 Int32
+    full_collection_name: CString
+    flags:                Int32
+    selector:             BSON
+    update:               BSON
+
+
+@struct(endianess=Little)
+class InsertMsg:
+    header: MsgHeader
+
+    flags:                Int32
+    full_collection_name: CString
+    documents:            Array(BSON)
+
+
+@struct(endianess=Little)
 class QueryMsg:
     header: MsgHeader
 
@@ -109,14 +140,32 @@ class QueryMsg:
 
 
 @struct(endianess=Little)
-class ReplyMsg:
+class GetMoreMsg:
     header: MsgHeader
 
-    response_flags:  Int32
-    cursor_id:       Int64
-    starting_from:   Int32
-    number_returned: Int32
-    documents:       Array(BSON, "number_returned")
+    zero:                 Int32
+    full_collection_name: CString
+    number_to_return:     Int32
+    cursor_id:            Int64
+
+
+@struct(endianess=Little)
+class DeleteMsg:
+    header: MsgHeader
+
+    zero:                 Int32
+    full_collection_name: CString
+    flags:                Int32
+    selector:             BSON
+
+
+@struct(endianess=Little)
+class KillCursorsMsg:
+    header: MsgHeader
+
+    zero:                 Int32
+    number_of_cursor_ids: Int32
+    cursor_ids:           Array(Int64, "number_of_cursor_ids")
 
 
 @struct(endianess=Little)
@@ -157,8 +206,13 @@ def unpack_msgmsg(buf):
 
 
 msg_unpackers = {
-    OP_QUERY: QueryMsg.unpack,
     OP_REPLY: ReplyMsg.unpack,
+    OP_UPDATE: UpdateMsg.unpack,
+    OP_INSERT: InsertMsg.unpack,
+    OP_QUERY: QueryMsg.unpack,
+    OP_GET_MORE: GetMoreMsg.unpack,
+    OP_DELETE: DeleteMsg.unpack,
+    OP_KILL_CURSORS: KillCursorsMsg.unpack,
     OP_MSG: unpack_msgmsg
 }
 
