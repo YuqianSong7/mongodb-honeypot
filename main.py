@@ -58,7 +58,7 @@ class ExecTimer:
         self.time = time() - self.time
 
 
-class OpCodes(IntEnum):
+class OpCode(IntEnum):
     OP_REPLY        = 1
     OP_UPDATE       = 2001
     OP_INSERT       = 2002
@@ -70,14 +70,14 @@ class OpCodes(IntEnum):
     OP_MSG          = 2013
 
 
-class FlagBits(IntEnum):
+class FlagBit(IntEnum):
     CHECKSUM_PRESENT = 1 << 0
     MORE_TO_COME     = 1 << 1
     EXHAUST_ALLOWED  = 1 << 16
 
 
-globals().update(OpCodes.__members__)
-globals().update(FlagBits.__members__)
+globals().update(OpCode.__members__)
+globals().update(FlagBit.__members__)
 
 
 def op_code_name(op_code):
