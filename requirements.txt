@@ -1,3 +1,5 @@
 colorama
 pymongo
 xstruct
+python-snappy
+zstd

@@ -20,6 +20,7 @@
 
 
 import sys
+import zlib
 from time import time
 from enum import IntEnum
 from socket import socket, AF_INET, SOCK_STREAM
@@ -34,6 +35,10 @@ from colorama import Fore
 
 from pymongo import MongoClient
 from pymongo.errors import ServerSelectionTimeoutError
+
+import snappy
+
+from zstd import ZSTD_uncompress
 
 from args import parser
 
@@ -76,8 +81,16 @@ class FlagBit(IntEnum):
     EXHAUST_ALLOWED  = 1 << 16
 
 
+class CompressorId(IntEnum):
+    NOOP   = 0
+    SNAPPY = 1
+    ZLIB   = 2
+    ZSTD   = 3
+
+
 globals().update(OpCode.__members__)
 globals().update(FlagBit.__members__)
+globals().update(CompressorId.__members__)
 
 
 def op_code_name(op_code):
@@ -205,6 +218,35 @@ def unpack_msgmsg(buf):
     return MsgMsg.unpack(buf)
 
 
+@struct(endianess=Little)
+class CompressedMsg:
+    header: MsgHeader
+
+    original_opcode:    Int32
+    uncompressed_size:  Int32
+    compressor_id:      UInt8
+    compressed_message: Bytes
+
+
+decompressors = {
+    NOOP: lambda x: x,
+    SNAPPY: snappy.uncompress,
+    ZLIB: zlib.decompress,
+    ZSTD: ZSTD_uncompress
+}
+
+
+def unpack_compressed(buf):
+    msg = CompressedMsg.unpack(buf)
+    data = decompressors[msg.compressor_id](msg.compressed_message)
+    header = MsgHeader(
+            message_length=4+msg.uncompressed_size,
+            request_id=msg.header.request_id,
+            response_to=msg.header.response_to,
+            op_code=msg.original_opcode)
+    return unpack_msg(header.pack()+data)
+
+
 msg_unpackers = {
     OP_REPLY: ReplyMsg.unpack,
     OP_UPDATE: UpdateMsg.unpack,
@@ -213,6 +255,7 @@ msg_unpackers = {
     OP_GET_MORE: GetMoreMsg.unpack,
     OP_DELETE: DeleteMsg.unpack,
     OP_KILL_CURSORS: KillCursorsMsg.unpack,
+    OP_COMPRESSED: unpack_compressed,
     OP_MSG: unpack_msgmsg
 }
 
@@ -222,7 +265,7 @@ def unpack_msg(buf):
     try:
         unpacker = msg_unpackers[header.op_code]
     except KeyError as e:
-        raise NotImplementedError(f"Unimplemented op_code {op_code_name(header.op_code)}") from e
+        raise RuntimeError(f"Invalid opcode") from e
     return unpacker(buf)
 
 
