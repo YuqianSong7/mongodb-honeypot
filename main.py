@@ -75,6 +75,11 @@ class OpCode(IntEnum):
     OP_MSG          = 2013
 
 
+class MsgMsgSectionKind(IntEnum):
+    BODY              = 0
+    DOCUMENT_SEQUENCE = 1
+
+
 class FlagBit(IntEnum):
     CHECKSUM_PRESENT = 1 << 0
     MORE_TO_COME     = 1 << 1
@@ -89,6 +94,7 @@ class CompressorId(IntEnum):
 
 
 globals().update(OpCode.__members__)
+globals().update(MsgMsgSectionKind.__members__)
 globals().update(FlagBit.__members__)
 globals().update(CompressorId.__members__)
 
@@ -189,19 +195,32 @@ class MsgMsgHeader:
 
 @struct(endianess=Little)
 class BodySection:
-    kind: UInt8
     body: BSON
+
+
+@struct(endianess=Little)
+class DocumentSequenceSection:
+    size: Int32
+    document_sequence_identifier: CString
+    documents: Array(BSON)
+
+
+section_unpackers = {
+    BODY: BodySection.unpack,
+    DOCUMENT_SEQUENCE: DocumentSequenceSection.unpack
+}
 
 
 class MsgSection(CustomMember):
     def unpack(self, obj, buf, endianess=Little):
         kind = buf[0]
         length = int.from_bytes(buf[1:5], byteorder[endianess], signed=False)
-        if kind == 0:
-            section = BodySection.unpack(buf)
-        else:
-            raise NotImplementedError(f"Unimplemented section kind {kind!r}")
-        return section, buf[sizeof(section):]
+        buf, rest = buf[1:1+length], buf[1+length:]
+        try:
+            unpacker = section_unpackers[kind]
+        except KeyError as e:
+            raise RuntimeError(f"Invalid section kind {kind!r}") from e
+        return unpacker(buf), rest
 
 
 @struct(endianess=Little)
