@@ -395,7 +395,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
     if not is_mongo_up(args.mongo_host):
         mongo_addr, mongo_port = args.mongo_host
-        print("Could not connect to Mongo at {mongo_addr}:{mongo_port}")
+        print(f"Could not connect to Mongo at {mongo_addr}:{mongo_port}")
         sys.exit(1)
     try:
         Thread(target=check_mongo, args=(args.mongo_host, args.check_interval), daemon=False).start()
