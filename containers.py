@@ -18,23 +18,53 @@
  ###############################################################################
 
 
-from argparse import ArgumentParser
+import subprocess
+
+from time import sleep
+from contextlib import suppress
+
+import docker
+from docker.errors import NotFound, ImageNotFound
 
 
-default_host = "localhost", 27017
+client = docker.from_env()
 
 
-def parse_host(default_address, default_port):
-    def parse(s):
-        address, sep, port = s.partition(":")
-        return address or default_address, int(port or default_port)
-    return parse
+def ensure_image_exists(name):
+    with suppress(ImageNotFound):
+        client.images.get(name)
+        return
+    subprocess.run(["docker", "pull", name])
+    client.images.get(name)
 
 
-parser = ArgumentParser(description="Configure mongodb-honeypot-monitor")
-parser.add_argument("-H", "--host", default=default_host, type=parse_host(*default_host), help="ADDRESS:PORT to bind the monitor to (default: localhost:27017)")
-parser.add_argument("-t", "--check-interval", default=5., type=float, help="Every how many seconds to check for mongodb being up (default: 5)")
+def ensure_container_running(container):
+    container.reload()
+    while container.status != "running":
+        sleep(.5)
+        container.reload()
 
 
-if __name__ == "__main__":
-    print(parser.parse_args())
+class MongoContainer:
+    def __init__(self, image="mongo:latest"):
+        self.image = image
+        self._start()
+
+    def _start(self):
+        ensure_image_exists(self.image)
+        self.container = client.containers.run(
+                self.image, detach=True, remove=True,
+                ports={"27017/tcp": ("127.0.0.1", None)})
+        ensure_container_running(self.container)
+        self.port = int(self.container.ports["27017/tcp"][0]["HostPort"])
+
+    def restart(self):
+        with suppress(NotFound):
+            self.container.kill()
+        self._start()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.container.kill()
