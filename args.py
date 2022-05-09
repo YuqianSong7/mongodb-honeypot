@@ -34,6 +34,7 @@ def parse_host(default_address, default_port):
 parser = ArgumentParser(description="Configure mongodb-honeypot-monitor")
 parser.add_argument("-H", "--host", default=default_host, type=parse_host(*default_host), help="ADDRESS:PORT to bind the monitor to (default: localhost:27017)")
 parser.add_argument("-t", "--check-interval", default=5., type=float, help="Every how many seconds to check for mongodb being up (default: 5)")
+parser.add_argument("-v", "--verbose", action="store_true", help="Enable verbose output")
 
 
 if __name__ == "__main__":

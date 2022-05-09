@@ -18,6 +18,7 @@
  ###############################################################################
 
 
+import sys
 import gzip
 import json
 import subprocess
@@ -30,6 +31,8 @@ from docker.errors import NotFound, ImageNotFound
 
 from pymongo import MongoClient
 
+import output
+
 
 client = docker.from_env()
 
@@ -38,7 +41,7 @@ def ensure_image_exists(name):
     with suppress(ImageNotFound):
         client.images.get(name)
         return
-    subprocess.run(["docker", "pull", name])
+    subprocess.run(["docker", "pull", name], stdout=sys.stderr.buffer)
     client.images.get(name)
 
 
@@ -50,20 +53,23 @@ def ensure_container_running(container):
 
 
 class MongoContainer:
-    def __init__(self, image="mongo:latest"):
+    def __init__(self, image="mongo:latest", dataset="primer-dataset.json.gz"):
         self.image = image
+        self.dataset = dataset
         self._start()
 
     def _start(self):
+        output.info("Looking for container image...")
         ensure_image_exists(self.image)
         self.container = client.containers.run(
                 self.image, detach=True, remove=True,
                 ports={"27017/tcp": ("127.0.0.1", None)})
+        output.info("Waiting for container to start...")
         ensure_container_running(self.container)
         self.port = int(self.container.ports["27017/tcp"][0]["HostPort"])
         mongo_client = MongoClient("127.0.0.1", self.port)
-        print("Loading dataset...")
-        with gzip.open("primer-dataset.json.gz") as f:
+        output.info("Loading dataset...")
+        with gzip.open(self.dataset) as f:
             mongo_client.db.restaurants.insert_many(map(json.loads, f))
 
     def restart(self):
