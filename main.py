@@ -198,5 +198,5 @@ if __name__ == "__main__":
     try:
         main()
     except KeyboardInterrupt:
-        print("Interrupted")
+        print("Interrupted", file=sys.stderr)
         sys.exit(1)
