@@ -20,6 +20,7 @@
 
 
 import sys
+import atexit
 from time import time, sleep
 from socket import socket, AF_INET, SOCK_STREAM
 from selectors import DefaultSelector, EVENT_READ
@@ -33,6 +34,7 @@ from pymongo.errors import ServerSelectionTimeoutError
 from xstruct import sizeof
 
 import output
+import logger
 from args import parser
 from messages import MsgHeader, unpack_msg
 from containers import MongoContainer
@@ -73,39 +75,47 @@ shutdown_event = Event()
 def proxy(peer_sock, mongo_sock, verbose):
     peer_addr, peer_port = peer_sock.getpeername()
     output.info(f"Incoming connection from {peer_addr}:{peer_port}")
+    logger.log("connection", "established", client=peer_addr, port=peer_port)
 
     with DefaultSelector() as selector:
         selector.register(peer_sock, EVENT_READ, mongo_sock)
         selector.register(mongo_sock, EVENT_READ, peer_sock)
+
         while True:
             selector_events = selector.select(timeout=1)
+
             if shutdown_event.is_set():
                 return
+
             for (sock, _, _, peer), _ in selector_events:
-                exit_condition = None
                 try:
                     buf = recv_msg(sock)
+
                 except ConnectionResetError:
-                    output_f = output.warning
                     if sock is peer_sock:
-                        exit_condition = "reset by peer"
+                        output.warning(f"Connection reset by peer {peer_addr}:{peer_port}")
+                        logger.log("connection", "reset by peer", client=peer_addr, port=peer_port)
                     else:
-                        exit_condition = "reset by upstream Mongo for peer"
-                except EOFError:
-                    output_f = output.info
-                    if sock is peer_sock:
-                        exit_condition = "closed by peer"
-                    else:
-                        exit_condition = "closed by upstream Mongo for peer"
-                if exit_condition:
-                    output_f(f"Connection {exit_condition} {peer_addr}:{peer_port}")
+                        output.warning(f"Connection reset by upstream server for peer {peer_addr}:{peer_port}")
+                        logger.log("connection", "reset by upstream server", client=peer_addr, port=peer_port)
                     return
+
+                except EOFError:
+                    if sock is peer_sock:
+                        output.info(f"Connection closed by peer {peer_addr}:{peer_port}")
+                        logger.log("connection", "closed by peer", client=peer_addr, port=peer_port)
+                    else:
+                        output.info(f"Connection closed by upstream server for peer {peer_addr}:{peer_port}")
+                        logger.log("connection", "closed by upstream server", client=peer_addr, port=peer_port)
+                    return
+
                 if verbose:
                     msg = unpack_msg(buf)
                     if sock is peer_sock:
                         output.primary(msg)
                     else:
                         output.secondary(msg)
+
                 peer.send(buf)
 
 
@@ -152,15 +162,18 @@ def check_mongo(mongo, check_interval):
         with elapsed:
             if not is_mongo_up("127.0.0.1", mongo.port):
                 output.warning("Mongo is unresponsive. Restarting...")
+                logger.log("mongo", "down")
                 mongo.restart()
                 output.success("Mongo restarted")
+                logger.log("mongo", "restarted")
 
 
 def main():
     output.init()
     args = parser.parse_args()
+    logger.init(args.log_file)
 
-    output.success("Starting mongo...")
+    output.info("Starting mongo...")
     with MongoContainer() as mongo:
         for _ in range(3):
             sleep(.5)
@@ -169,7 +182,10 @@ def main():
         else:
             output.error(f"Could not connect to Mongo at 127.0.0.1:{mongo.port}")
             sys.exit(1)
-        output.success("Mongo started")
+        output.info("Mongo started")
+        output.success("Ready")
+        logger.log("system", "startup")
+        atexit.register(lambda: logger.log("system", "shutdown"))
         try:
             Thread(target=check_mongo, args=(mongo, args.check_interval), daemon=False).start()
             with ProxyServer(args.host, MongoHandler(mongo, args.verbose)) as server:

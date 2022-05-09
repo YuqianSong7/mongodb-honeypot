@@ -18,25 +18,39 @@
  ###############################################################################
 
 
-from argparse import ArgumentParser
+import atexit
+import json
+
+from datetime import datetime
+from threading import Lock
 
 
-default_host = "localhost", 27017
+log_lock = Lock()
+log_file = None
 
 
-def parse_host(default_address, default_port):
-    def parse(s):
-        address, sep, port = s.partition(":")
-        return address or default_address, int(port or default_port)
-    return parse
+@atexit.register
+def cleanup():
+    if log_file is not None:
+        log_file.close()
 
 
-parser = ArgumentParser(description="Configure mongodb-honeypot-monitor")
-parser.add_argument("-H", "--host", default=default_host, type=parse_host(*default_host), help="ADDRESS:PORT to bind the monitor to (default: localhost:27017)")
-parser.add_argument("-o", "--log-file", default="mongodb-honeypot.log", help="Change log output destination")
-parser.add_argument("-t", "--check-interval", default=5., type=float, help="Every how many seconds to check for mongodb being up (default: 5)")
-parser.add_argument("-v", "--verbose", action="store_true", help="Enable verbose output")
+def init(log_path):
+    global log_file
+    log_file = open(log_path, "a")
 
 
-if __name__ == "__main__":
-    print(parser.parse_args())
+def log(entry_type, event, **data):
+    if log_file is None:
+        raise RuntimeError("logger.log was called before initialization")
+
+    entry = {
+        "timestamp": f"{datetime.utcnow().isoformat()}Z",
+        "type": entry_type,
+        "event": event,
+        **data
+    }
+
+    with log_lock:
+        json.dump(entry, log_file)
+        print(file=log_file, flush=True)
