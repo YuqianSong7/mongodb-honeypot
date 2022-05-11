@@ -36,7 +36,7 @@ from xstruct import sizeof
 import output
 import logger
 from args import parser
-from messages import MsgHeader, unpack_msg
+from messages import MsgHeader, unpack_msg, OP_MSG, BodySection
 from containers import MongoContainer
 
 
@@ -67,6 +67,33 @@ def recv_msg(sock):
             raise EOFError
         i += read
     return bytes(buf)
+
+
+def analyze_find(db, collection, filter_, peer_addr, peer_port):
+    match filter_:
+        case {"$where": query}:
+            output.warning(f"$where query: {query!r}")
+            logger.log("suspicious activity", "$where query", client=peer_addr, port=peer_port, query=query)
+        case _:
+            for field, pred in filter_.items():
+                if not field.startswith("$"):
+                    match pred:
+                        case {"$regex": regex}:
+                            output.warning(f"$regex query: {regex!r}")
+                            logger.log("suspicious activity", "$regex query", client=peer_addr, port=peer_port, regex=regex)
+
+
+def analyze_msg_msg_body_section(body, peer_addr, peer_port):
+    match body:
+        case {"find": collection, "$db": db, "filter": filter_, **rest}:
+            analyze_find(db, collection, filter_, peer_addr, peer_port)
+
+
+def analyze(msg, peer_addr, peer_port):
+    if msg.header.op_code == OP_MSG:
+        for section in msg.sections:
+            if isinstance(section, BodySection):
+                analyze_msg_msg_body_section(section.body, peer_addr, peer_port)
 
 
 shutdown_event = Event()
@@ -109,12 +136,16 @@ def proxy(peer_sock, mongo_sock, verbose):
                         logger.log("connection", "closed by upstream server", client=peer_addr, port=peer_port)
                     return
 
+                msg = unpack_msg(buf)
+
                 if verbose:
-                    msg = unpack_msg(buf)
                     if sock is peer_sock:
                         output.primary(msg)
                     else:
                         output.secondary(msg)
+
+                if sock is peer_sock:
+                    analyze(msg, peer_addr, peer_port)
 
                 peer.send(buf)
 
