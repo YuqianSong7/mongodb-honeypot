@@ -72,15 +72,15 @@ def recv_msg(sock):
 def analyze_find(db, collection, filter_, peer_addr, peer_port):
     match filter_:
         case {"$where": query}:
-            output.warning(f"$where query: {query!r}")
-            logger.log("suspicious activity", "$where query", client=peer_addr, port=peer_port, query=query)
+            output.warning(f"$where: {query!r}")
+            logger.log("suspicious_activity", "$where", client=peer_addr, port=peer_port, query=query)
         case _:
             for field, pred in filter_.items():
                 if not field.startswith("$"):
                     match pred:
                         case {"$regex": regex}:
-                            output.warning(f"$regex query: {regex!r}")
-                            logger.log("suspicious activity", "$regex query", client=peer_addr, port=peer_port, regex=regex)
+                            output.warning(f"$regex: {regex!r}")
+                            logger.log("suspicious_activity", "$regex", client=peer_addr, port=peer_port, regex=regex)
 
 
 def analyze_msg_msg_body_section(body, peer_addr, peer_port):
@@ -89,11 +89,20 @@ def analyze_msg_msg_body_section(body, peer_addr, peer_port):
             analyze_find(db, collection, filter_, peer_addr, peer_port)
 
 
-def analyze(msg, peer_addr, peer_port):
+def analyze(msg, direction, peer_addr, peer_port):
     if msg.header.op_code == OP_MSG:
-        for section in msg.sections:
-            if isinstance(section, BodySection):
-                analyze_msg_msg_body_section(section.body, peer_addr, peer_port)
+        logger.log(
+                direction,
+                "msgmsg",
+                client=peer_addr,
+                port=peer_port,
+                request_id=msg.header.request_id,
+                response_to=msg.header.response_to,
+                sections=msg.sections)
+        if direction == "request":
+            for section in msg.sections:
+                if isinstance(section, BodySection):
+                    analyze_msg_msg_body_section(section.body, peer_addr, peer_port)
 
 
 shutdown_event = Event()
@@ -144,8 +153,7 @@ def proxy(peer_sock, mongo_sock, verbose):
                     else:
                         output.secondary(msg)
 
-                if sock is peer_sock:
-                    analyze(msg, peer_addr, peer_port)
+                analyze(msg, "request" if sock is peer_sock else "response", peer_addr, peer_port)
 
                 peer.send(buf)
 

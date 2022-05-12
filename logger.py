@@ -24,6 +24,9 @@ import json
 from datetime import datetime
 from threading import Lock
 
+from bson import Binary
+from messages import BodySection, DocumentSequenceSection
+
 
 log_lock = Lock()
 log_file = None
@@ -40,6 +43,20 @@ def init(log_path):
     log_file = open(log_path, "a")
 
 
+def convert_bson(obj):
+    if isinstance(obj, Binary):
+        return {"$bson": "binary", "value": obj.hex()}
+    elif isinstance(obj, BodySection):
+        return {"$mongo": "msgmsg_body", "body": obj.body}
+    elif isinstance(obj, DocumentSequenceSection):
+        return {
+            "$mongo": "msgmsg_document_sequence",
+            "body": obj.body,
+            "document_sequence_identifier": obj.document_sequence_identifier,
+            "documents": obj.documents
+        }
+
+
 def log(entry_type, event, **data):
     if log_file is None:
         raise RuntimeError("logger.log was called before initialization")
@@ -52,5 +69,5 @@ def log(entry_type, event, **data):
     }
 
     with log_lock:
-        json.dump(entry, log_file)
+        json.dump(entry, log_file, default=convert_bson)
         print(file=log_file, flush=True)
