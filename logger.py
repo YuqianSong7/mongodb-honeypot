@@ -18,18 +18,25 @@
  ###############################################################################
 
 
+import os
+import re
 import atexit
 import json
+import gzip
+import shutil
 
+from pathlib import Path
 from datetime import datetime
-from threading import Lock
+from threading import Lock, Thread
 
 from bson import Binary
 from messages import BodySection, DocumentSequenceSection
 
 
+
 log_lock = Lock()
 log_file = None
+threshold = None
 
 
 @atexit.register
@@ -38,9 +45,10 @@ def cleanup():
         log_file.close()
 
 
-def init(log_path):
-    global log_file
+def init(log_path, log_rotation_threshold=100*1024*1024):
+    global log_file, threshold
     log_file = open(log_path, "a")
+    threshold = log_rotation_threshold
 
 
 def convert_bson(obj):
@@ -57,6 +65,28 @@ def convert_bson(obj):
         }
 
 
+def rotate_log():
+    global log_file
+    log_path = Path(log_file.name).resolve()
+    log_re = re.compile(rf"{re.escape(log_path.name)}\.(\d+)\.gz")
+    n = 0
+    for file in log_path.parent.iterdir():
+        if m := log_re.match(file.name):
+            n = max(n, int(m.group(1))+1)
+    log_file.close()
+    with open(log_path, "rb") as log_file:
+        with gzip.open(f"{log_path}.{n:03}.gz", "wb") as gzipped_log:
+            shutil.copyfileobj(log_file, gzipped_log)
+    log_file = open(log_path, "w")
+
+
+def log_entry(entry):
+    if os.fstat(log_file.fileno()).st_size > threshold:
+        rotate_log()
+    json.dump(entry, log_file, default=convert_bson)
+    print(file=log_file, flush=True)
+
+
 def log(entry_type, event, **data):
     if log_file is None:
         raise RuntimeError("logger.log was called before initialization")
@@ -69,5 +99,6 @@ def log(entry_type, event, **data):
     }
 
     with log_lock:
-        json.dump(entry, log_file, default=convert_bson)
-        print(file=log_file, flush=True)
+        t = Thread(target=log_entry, args=(entry,))
+        t.start()
+        t.join()
