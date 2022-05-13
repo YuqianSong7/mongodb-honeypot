@@ -28,6 +28,8 @@ from socketserver import BaseRequestHandler, TCPServer, ThreadingMixIn
 from threading import Thread, Lock, Event
 from functools import wraps
 
+from docker.errors import DockerException, NotFound
+
 from pymongo import MongoClient
 from pymongo.errors import ServerSelectionTimeoutError
 
@@ -239,3 +241,9 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         print("Interrupted", file=sys.stderr)
         sys.exit(1)
+    except (ServerSelectionTimeoutError, NotFound):
+        output.error("Mongo seems not to be working\nCheck the output of `docker run -ti --rm mongo:latest'")
+        sys.exit(3)
+    except DockerException:
+        output.error("Docker error (is docker up?)")
+        sys.exit(2)

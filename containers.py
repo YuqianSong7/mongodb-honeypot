@@ -34,38 +34,34 @@ from pymongo import MongoClient
 import output
 
 
-client = docker.from_env()
-
-
-def ensure_image_exists(name):
-    with suppress(ImageNotFound):
-        client.images.get(name)
-        return
-    subprocess.run(["docker", "pull", name], stdout=sys.stderr.buffer)
-    client.images.get(name)
-
-
-def ensure_container_running(container):
-    container.reload()
-    while container.status != "running":
-        sleep(.5)
-        container.reload()
-
-
 class MongoContainer:
     def __init__(self, image="mongo:latest", dataset="primer-dataset.json.gz"):
+        self.client = docker.from_env()
         self.image = image
         self.dataset = dataset
         self._start()
 
+    def _ensure_image_exists(self):
+        with suppress(ImageNotFound):
+            self.client.images.get(self.image)
+            return
+        subprocess.run(["docker", "pull", self.image], stdout=sys.stderr.buffer)
+        self.client.images.get(self.image)
+
+    def _ensure_container_running(self):
+        self.container.reload()
+        while self.container.status != "running":
+            sleep(.5)
+            self.container.reload()
+
     def _start(self):
         output.info("Looking for container image...")
-        ensure_image_exists(self.image)
-        self.container = client.containers.run(
+        self._ensure_image_exists()
+        self.container = self.client.containers.run(
                 self.image, detach=True, remove=True,
                 ports={"27017/tcp": ("127.0.0.1", None)})
         output.info("Waiting for container to start...")
-        ensure_container_running(self.container)
+        self._ensure_container_running()
         self.port = int(self.container.ports["27017/tcp"][0]["HostPort"])
         mongo_client = MongoClient("127.0.0.1", self.port)
         output.info("Loading dataset...")
