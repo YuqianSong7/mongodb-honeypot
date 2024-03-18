@@ -66,7 +66,7 @@ class MongoContainer:
         mongo_client = MongoClient("127.0.0.1", self.port)
         output.info("Loading dataset...")
         with gzip.open(self.dataset) as f:
-            mongo_client.db.restaurants.insert_many(map(json.loads, f))
+            mongo_client.db.customers.insert_many(map(json.loads, f))
 
     def restart(self):
         with suppress(NotFound):
